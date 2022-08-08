@@ -1,5 +1,7 @@
 // Description: Open with...
 
+import { Choice } from "../types"
+
 let filePath = await path()
 
 setName(``)
@@ -101,19 +103,22 @@ let createChoices = async () => {
     })
   )
 }
-let appsDb = await db("apps", async () => {
-  setChoices([])
-  setPrompt({
-    tabs: [],
-  })
-  console.log(
-    `First run: Indexing apps and converting icons...`
-  )
-  let choices = await createChoices()
-  console.clear()
-  return {
-    choices,
-  }
+let appsDb = await db<{ choices: Choice[] }>({
+  key: "apps",
+  defaults: async () => {
+    setChoices([])
+    setPrompt({
+      tabs: [],
+    })
+    console.log(
+      `First run: Indexing apps and converting icons...`
+    )
+    let choices = await createChoices()
+    console.clear()
+    return {
+      choices,
+    }
+  },
 })
 let input = ""
 let app = await arg(

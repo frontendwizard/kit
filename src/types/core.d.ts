@@ -97,6 +97,7 @@ export type PromptDb = {
       [script: string]: PromptBounds
     }
   }
+  clear: boolean
 }
 
 export type InputType =

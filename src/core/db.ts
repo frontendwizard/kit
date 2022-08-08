@@ -32,20 +32,15 @@ export const resolveKenv = (...parts: string[]) => {
   return kenvPath(...parts)
 }
 
-export let db = async (
-  key: any,
-  defaults?: any,
-  fromCache = true
-): Promise<Low & any> => {
-  if (
-    typeof defaults === "undefined" &&
-    typeof key !== "string"
-  ) {
-    defaults = key
-    key = "_" + resolveScriptToCommand(global.kitScript)
-  }
-  if (typeof defaults === "undefined") defaults = {}
-
+export async function arrayDb<T>({
+  key = "_" + resolveScriptToCommand(global.kitScript),
+  defaults = [] as T[],
+  fromCache = true,
+}: {
+  key?: string
+  defaults?: T[] | (() => Promise<T[]>)
+  fromCache?: boolean
+}) {
   let dbPath = key
   if (!key.endsWith(".json")) {
     dbPath = resolveKenv("db", `${key}.json`)
@@ -58,28 +53,106 @@ export let db = async (
         dbPath
       )}. Returning defaults...`
     )
+
     return {
-      ...defaults,
+      items: defaults,
       write: () => {},
     }
   }
 
-  let _db = new Low(new JSONFile(dbPath))
+  let _db = new Low<{ items: T[] }>(new JSONFile(dbPath))
 
   await _db.read()
 
+  const isFunction = (
+    defaults: T[] | (() => Promise<T[]>)
+  ): defaults is () => Promise<T[]> =>
+    typeof defaults === "function"
+
   if (!_db.data || !fromCache) {
     let getData = async () => {
-      if (typeof defaults === "function") {
+      if (isFunction(defaults)) {
         let data = await defaults()
         if (Array.isArray(data)) return { items: data }
 
         return data
       }
 
-      if (Array.isArray(defaults))
-        return { items: defaults }
+      return { items: defaults }
+    }
 
+    _db.data = await getData()
+
+    await _db.write()
+  }
+
+  return new Proxy<Low<{ items: T[] }>>(
+    {} as Low<{ items: T[] }>,
+    {
+      get: (_target, k: string) => {
+        if (k === "then") return _db
+        let d = _db
+        if (d[k]) {
+          return typeof d[k] === "function"
+            ? d[k].bind(d)
+            : d[k]
+        }
+        return _db?.data?.[k]
+      },
+      set: (target: any, key: string, value: any) => {
+        try {
+          _db.data[key] = value
+          return true
+        } catch (error) {
+          return false
+        }
+      },
+    }
+  )
+}
+
+global.arrayDb = arrayDb
+
+export async function db<T extends object>({
+  key = "_" + resolveScriptToCommand(global.kitScript),
+  defaults = {} as T,
+  fromCache = true,
+}: {
+  key?: string
+  defaults?: T | (() => Promise<T>)
+  fromCache?: boolean
+}) {
+  let dbPath = key
+  if (!key.endsWith(".json")) {
+    dbPath = resolveKenv("db", `${key}.json`)
+  }
+
+  let parentExists = await isDir(path.dirname(dbPath))
+  if (!parentExists) {
+    console.warn(
+      `Couldn't find ${path.dirname(
+        dbPath
+      )}. Returning defaults...`
+    )
+
+    return {
+      ...defaults,
+      write: () => {},
+    } as Low<T> & T
+  }
+
+  let _db = new Low<T>(new JSONFile(dbPath))
+
+  await _db.read()
+
+  const isFunction = (
+    defaults: T | (() => Promise<T>)
+  ): defaults is () => Promise<T> =>
+    typeof defaults === "function"
+
+  if (!_db.data || !fromCache) {
+    let getData = async () => {
+      if (isFunction(defaults)) return defaults()
       return defaults
     }
 
@@ -88,10 +161,10 @@ export let db = async (
     await _db.write()
   }
 
-  return new Proxy({} as any, {
+  return new Proxy<Low<T> & T>({} as Low<T> & T, {
     get: (_target, k: string) => {
       if (k === "then") return _db
-      let d = _db as any
+      let d = _db
       if (d[k]) {
         return typeof d[k] === "function"
           ? d[k].bind(d)
@@ -101,7 +174,7 @@ export let db = async (
     },
     set: (target: any, key: string, value: any) => {
       try {
-        ;(_db as any).data[key] = value
+        _db.data[key] = value
         return true
       } catch (error) {
         return false
@@ -112,19 +185,14 @@ export let db = async (
 
 global.db = db
 
-export let getScriptsDb = async (
-  fromCache = true
-): Promise<{
-  scripts: Script[]
-}> => {
+export let getScriptsDb = async (fromCache = true) => {
   // if (!fromCache) console.log(`🔄 Refresh scripts db`)
-  return await db(
-    kitPath("db", "scripts.json"),
-    async () => ({
-      scripts: await parseScripts(),
-    }),
-    fromCache
-  )
+  const scripts = await parseScripts()
+  return db<{ scripts: typeof scripts }>({
+    key: kitPath("db", "scripts.json"),
+    defaults: { scripts },
+    fromCache,
+  })
 }
 
 export let refreshScriptsDb = async () => {
@@ -132,7 +200,7 @@ export let refreshScriptsDb = async () => {
 }
 
 export let getPrefs = async () => {
-  return await db(kitPath("db", "prefs.json"))
+  return await db({ key: kitPath("db", "prefs.json") })
 }
 
 export let getScriptFromString = async (
@@ -206,12 +274,14 @@ export const appDefaults = {
   autoUpdate: true,
   tray: true,
   openAtLogin: true,
+  previewScripts: false,
 }
 
-export let getAppDb = async (): Promise<
-  Low<any> & AppDb
-> => {
-  return await db(appDbPath, appDefaults)
+export let getAppDb = async () => {
+  return await db<AppDb>({
+    key: appDbPath,
+    defaults: appDefaults,
+  })
 }
 
 type ShortcutsDb = {
@@ -219,12 +289,13 @@ type ShortcutsDb = {
     [key: string]: string
   }
 }
-export let getShortcutsDb = async (): Promise<
-  Low<any> & ShortcutsDb
-> => {
-  return await db(shortcutsPath, {
-    shortcuts: {
-      [mainScriptPath]: isMac ? "cmd ;" : "ctrl ;",
+export let getShortcutsDb = async () => {
+  return await db<ShortcutsDb>({
+    key: shortcutsPath,
+    defaults: {
+      shortcuts: {
+        [mainScriptPath]: isMac ? "cmd ;" : "ctrl ;",
+      },
     },
   })
 }
@@ -232,17 +303,19 @@ export let getShortcutsDb = async (): Promise<
 type PrefsDb = {
   showJoin: boolean
 }
-export let getPrefsDb = async (): Promise<
-  Low<any> & PrefsDb
-> => {
-  return await db(prefsPath, { showJoin: true })
+export let getPrefsDb = async () => {
+  return await db<PrefsDb>({
+    key: prefsPath,
+    defaults: { showJoin: true },
+  })
 }
 
-export let getPromptDb = async (): Promise<
-  Low<any> & PromptDb
-> => {
-  return await db(promptDbPath, {
-    screens: {},
-    clear: false,
+export let getPromptDb = async () => {
+  return await db<PromptDb>({
+    key: promptDbPath,
+    defaults: {
+      screens: {},
+      clear: false,
+    },
   })
 }

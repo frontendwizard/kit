@@ -1,3 +1,5 @@
+import { Choice } from "../types"
+
 let appsPath = kitPath("db", "apps.json")
 if (await isFile(appsPath)) await remove(appsPath)
 
@@ -75,10 +77,11 @@ let createChoices = async () => {
   )
 }
 
-await db("apps", async () => {
-  return {
+await db<{ choices: Choice[] }>({
+  key: "apps",
+  defaults: async () => ({
     choices: await createChoices(),
-  }
+  }),
 })
 
 export {}

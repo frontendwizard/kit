@@ -1,6 +1,9 @@
-import { Channel } from "../core/enum.js"
+import { Channel } from "../core/enum"
+import { Choice } from "../types/core"
 
-let kitAppDb = await db(kitPath("db", "app.json"))
+let kitAppDb = await db<{ KENVS: Choice[] }>({
+  key: kitPath("db", "app.json"),
+})
 
 let kenv = await arg(
   {

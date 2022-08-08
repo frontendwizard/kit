@@ -1,3 +1,5 @@
+import { Choice } from "../types"
+
 // Description: App Launcher
 setName(``)
 let findAppsAndPrefs = async () => {
@@ -93,28 +95,32 @@ let createChoices = async () => {
           }
         }
       }
-      return {
+      const choice: Choice<string> = {
         name: appName.replace(".app", ""),
         value: appPath,
         description: appPath,
         img,
       }
+      return choice
     })
   )
 }
-let appsDb = await db("apps", async () => {
-  setChoices([])
-  setPrompt({
-    tabs: [],
-  })
-  console.log(
-    `First run: Indexing apps and converting icons...`
-  )
-  let choices = await createChoices()
-  console.clear()
-  return {
-    choices,
-  }
+let appsDb = await db<{ choices: Choice[] }>({
+  key: "apps",
+  defaults: async () => {
+    setChoices([])
+    setPrompt({
+      tabs: [],
+    })
+    console.log(
+      `First run: Indexing apps and converting icons...`
+    )
+    let choices = await createChoices()
+    console.clear()
+    return {
+      choices,
+    }
+  },
 })
 let input = ""
 let app = await arg(
